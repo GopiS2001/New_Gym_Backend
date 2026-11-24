@@ -6,11 +6,11 @@ services:
     runtime: node
     plan: free
     region: singapore
-    # --include=dev: the Nest CLI, TypeScript and Prisma CLI are devDependencies,
+    # .npmrc has include=dev: the Nest CLI, TypeScript and Prisma CLI are devDependencies,
     # which npm skips when NODE_ENV=production.
-    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    buildCommand: npm install && npm run build
     # Migrations run on start (pre-deploy commands need a paid plan). Add-only, safe to repeat.
-    startCommand: npx prisma migrate deploy && npm start
+    startCommand: npm start
     healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_ENV

@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "dist/main.js",
   "scripts": {
-    "build": "nest build",
-    "start": "node dist/main.js",
+    "build": "prisma generate && nest build",
+    "start": "prisma migrate deploy && node dist/main.js",
     "dev": "nest start --watch",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
