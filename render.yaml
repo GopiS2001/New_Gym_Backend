@@ -1,0 +1,53 @@
+# Render Blueprint — New > Blueprint > pick this repo.
+# Secrets marked `sync: false` are asked for in the Render dashboard on first deploy.
+services:
+  - type: web
+    name: new-gym-backend
+    runtime: node
+    plan: free
+    region: singapore
+    # --include=dev: the Nest CLI, TypeScript and Prisma CLI are devDependencies,
+    # which npm skips when NODE_ENV=production.
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    # Migrations run on start (pre-deploy commands need a paid plan). Add-only, safe to repeat.
+    startCommand: npx prisma migrate deploy && npm start
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL # hosted MySQL, e.g. mysql://USER:PASS@HOST:PORT/premium_gym
+        sync: false
+      - key: APP_PUBLIC_URL # e.g. https://new-gym-backend.onrender.com
+        sync: false
+      - key: CORS_ORIGINS # dashboard URL(s), comma separated
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL_DAYS
+        value: "30"
+      - key: UPLOAD_DIR
+        value: uploads
+      - key: UPLOAD_MAX_IMAGE_MB
+        value: "10"
+      - key: UPLOAD_MAX_VIDEO_MB
+        value: "200"
+      - key: SEED_ADMIN_EMAIL
+        value: admin@gym.local
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        sync: false
