@@ -1,0 +1,1233 @@
+// Premium Fitness & Gym App — database schema (MySQL)
+// IDs are numeric auto-increment throughout. Timestamps are stored in UTC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserType {
+  MEMBER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum Difficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum OnboardingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum OnboardingOptionGroup {
+  GENDER
+  ACTIVITY
+  MOTIVATION
+}
+
+enum WeightUnit {
+  KG
+  LB
+}
+
+enum DistanceUnit {
+  KM
+  MI
+  M
+}
+
+enum MuscleRole {
+  PRIMARY
+  SECONDARY
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum SessionStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  DISCARDED
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum NotificationType {
+  REMINDER
+  MOTIVATION
+  ANNOUNCEMENT
+}
+
+enum NotificationTrigger {
+  SCHEDULED
+  WORKOUT_REMINDER
+  INACTIVITY
+  MANUAL
+}
+
+enum JobStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum TokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+// ---------------------------------------------------------------------------
+// Identity, roles and permissions
+// ---------------------------------------------------------------------------
+
+model User {
+  id              Int        @id @default(autoincrement())
+  name            String     @db.VarChar(120)
+  email           String     @unique @db.VarChar(191)
+  passwordHash    String     @map("password_hash") @db.VarChar(255)
+  type            UserType   @default(MEMBER)
+  roleId          Int?       @map("role_id")
+  status          UserStatus @default(ACTIVE)
+  avatarUrl       String?    @map("avatar_url") @db.VarChar(500)
+  emailVerifiedAt DateTime?  @map("email_verified_at")
+  lastLoginAt     DateTime?  @map("last_login_at")
+  /// Last authenticated request / app heartbeat (online = recent and not in background).
+  lastSeenAt      DateTime?  @map("last_seen_at")
+  appInBackground Boolean    @default(false) @map("app_in_background")
+  /// Access tokens issued before this moment are rejected (admin force logout).
+  sessionsRevokedAt DateTime? @map("sessions_revoked_at")
+  /// Number of accepted friendships (kept in sync on accept / remove).
+  friendCount     Int        @default(0) @map("friend_count")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  role                    Role?                   @relation(fields: [roleId], references: [id])
+  profile                 MemberProfile?
+  refreshTokens           RefreshToken[]
+  oneTimeTokens           OneTimeToken[]
+  goals                   MemberGoal[]
+  focusAreas              MemberFocusArea[]
+  motivations             MemberMotivation[]
+  equipment               MemberEquipment[]
+  measurements            BodyMeasurement[]
+  notificationPreference  NotificationPreference?
+  notificationDays        NotificationDay[]
+  pushTokens              DevicePushToken[]
+  workoutSessions         WorkoutSession[]
+  savedExercises          SavedExercise[]
+  savedPrograms           SavedProgram[]
+  collections             MemberCollection[]
+  enrollments             ProgramEnrollment[]
+  exerciseViews           ExerciseView[]
+  notificationJobs        NotificationJob[]
+  auditLogs               AuditLog[]
+  mediaAssets             MediaAsset[]
+  exercisesCreated        Exercise[]              @relation("ExerciseCreatedBy")
+  exercisesUpdated        Exercise[]              @relation("ExerciseUpdatedBy")
+  friendRequestsSent      FriendRequest[]         @relation("FriendRequestFrom")
+  friendRequestsReceived  FriendRequest[]         @relation("FriendRequestTo")
+  friendshipsA            Friendship[]            @relation("FriendshipA")
+  friendshipsB            Friendship[]            @relation("FriendshipB")
+  inbox                   MemberNotification[]
+
+  @@index([type, status])
+  @@index([createdAt])
+  @@index([lastSeenAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id         Int       @id @default(autoincrement())
+  userId     Int       @map("user_id")
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(128)
+  familyId   String    @map("family_id") @db.VarChar(64)
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  userAgent  String?   @map("user_agent") @db.VarChar(255)
+  ipAddress  String?   @map("ip_address") @db.VarChar(64)
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model OneTimeToken {
+  id        Int          @id @default(autoincrement())
+  userId    Int          @map("user_id")
+  purpose   TokenPurpose
+  tokenHash String       @unique @map("token_hash") @db.VarChar(128)
+  expiresAt DateTime     @map("expires_at")
+  usedAt    DateTime?    @map("used_at")
+  /// Wrong code entries (codes lock after 5).
+  attempts  Int          @default(0)
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@map("one_time_tokens")
+}
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique @db.VarChar(64)
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("admin_roles")
+}
+
+model Permission {
+  id          Int    @id @default(autoincrement())
+  key         String @unique @db.VarChar(100)
+  description String @db.VarChar(255)
+  module      String @db.VarChar(64)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       Int @map("role_id")
+  permissionId Int @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ---------------------------------------------------------------------------
+// Member profile and onboarding
+// ---------------------------------------------------------------------------
+
+model MemberProfile {
+  userId              Int              @id @map("user_id")
+  genderOptionId      Int?             @map("gender_option_id")
+  genderCustom        String?          @map("gender_custom") @db.VarChar(80)
+  heightCm            Decimal?         @map("height_cm") @db.Decimal(5, 1)
+  preferredWeightUnit WeightUnit       @default(KG) @map("preferred_weight_unit")
+  preferredDistanceUnit DistanceUnit   @default(KM) @map("preferred_distance_unit")
+  experienceLevelId   Int?             @map("experience_level_id")
+  activityOptionId    Int?             @map("activity_option_id")
+  weeklyWorkoutDays   Int?             @map("weekly_workout_days")
+  timezone            String           @default("UTC") @db.VarChar(64)
+  onboardingStatus    OnboardingStatus @default(NOT_STARTED) @map("onboarding_status")
+  onboardingStep      String?          @map("onboarding_step") @db.VarChar(64)
+  onboardingVersion   Int              @default(1) @map("onboarding_version")
+  onboardingDraft     Json?            @map("onboarding_draft")
+  onboardingCompletedAt DateTime?      @map("onboarding_completed_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  genderOption    OnboardingOption? @relation("ProfileGender", fields: [genderOptionId], references: [id])
+  activityOption  OnboardingOption? @relation("ProfileActivity", fields: [activityOptionId], references: [id])
+  experienceLevel ExperienceLevel?  @relation(fields: [experienceLevelId], references: [id])
+
+  @@index([onboardingStatus])
+  @@map("member_profiles")
+}
+
+model OnboardingOption {
+  id          Int                   @id @default(autoincrement())
+  group       OnboardingOptionGroup
+  label       String                @db.VarChar(120)
+  slug        String                @db.VarChar(120)
+  description String?               @db.VarChar(255)
+  imageUrl    String?               @map("image_url") @db.VarChar(500)
+  allowsFreeText Boolean            @default(false) @map("allows_free_text")
+  sortOrder   Int                   @default(0) @map("sort_order")
+  status      Status                @default(ACTIVE)
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+
+  genderProfiles   MemberProfile[]    @relation("ProfileGender")
+  activityProfiles MemberProfile[]    @relation("ProfileActivity")
+  motivations      MemberMotivation[]
+
+  @@unique([group, slug])
+  @@map("onboarding_options")
+}
+
+model ExperienceLevel {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  slug        String   @unique @db.VarChar(120)
+  description String?  @db.VarChar(255)
+  rank        Int      @default(0)
+  sortOrder   Int      @default(0) @map("sort_order")
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  profiles MemberProfile[]
+
+  @@map("experience_levels")
+}
+
+model MemberGoal {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  goalId    Int      @map("goal_id")
+  isPrimary Boolean  @default(true) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal Goal @relation(fields: [goalId], references: [id])
+
+  @@unique([userId, goalId])
+  @@map("member_goals")
+}
+
+model MemberFocusArea {
+  userId      Int @map("user_id")
+  focusAreaId Int @map("focus_area_id")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  focusArea FocusArea @relation(fields: [focusAreaId], references: [id])
+
+  @@id([userId, focusAreaId])
+  @@map("member_focus_areas")
+}
+
+model MemberMotivation {
+  userId   Int @map("user_id")
+  optionId Int @map("option_id")
+
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  option OnboardingOption @relation(fields: [optionId], references: [id])
+
+  @@id([userId, optionId])
+  @@map("member_motivations")
+}
+
+model MemberEquipment {
+  userId      Int @map("user_id")
+  equipmentId Int @map("equipment_id")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@id([userId, equipmentId])
+  @@map("member_equipment")
+}
+
+model BodyMeasurement {
+  id              Int        @id @default(autoincrement())
+  userId          Int        @map("user_id")
+  measurementType String     @default("weight") @map("measurement_type") @db.VarChar(40)
+  value           Decimal    @db.Decimal(7, 2)
+  unit            String     @db.VarChar(10)
+  measuredAt      DateTime   @default(now()) @map("measured_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, measurementType, measuredAt])
+  @@map("body_measurements")
+}
+
+model NotificationPreference {
+  userId        Int      @id @map("user_id")
+  enabled       Boolean  @default(false)
+  timezone      String   @default("UTC") @db.VarChar(64)
+  preferredTime String?  @map("preferred_time") @db.VarChar(5)
+  permissionAsked Boolean @default(false) @map("permission_asked")
+  permissionGranted Boolean? @map("permission_granted")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+model NotificationDay {
+  userId    Int @map("user_id")
+  dayOfWeek Int @map("day_of_week") // 0 = Sunday … 6 = Saturday
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, dayOfWeek])
+  @@map("notification_days")
+}
+
+model DevicePushToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  token     String   @unique @db.VarChar(255)
+  platform  String   @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("device_push_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Exercise catalogue reference data
+// ---------------------------------------------------------------------------
+
+model Goal {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  slug        String   @unique @db.VarChar(120)
+  description String?  @db.Text
+  icon        String?  @db.VarChar(100)
+  imageUrl    String?  @map("image_url") @db.VarChar(500)
+  motivationMessage String? @map("motivation_message") @db.VarChar(255)
+  recommendationMeta Json? @map("recommendation_meta")
+  sortOrder   Int      @default(0) @map("sort_order")
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  members          MemberGoal[]
+  programs         Program[]
+  workoutTemplates WorkoutTemplate[]
+  exercises        ExerciseGoal[]
+
+  @@index([status, sortOrder])
+  @@map("goals")
+}
+
+model FocusArea {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  slug        String   @unique @db.VarChar(120)
+  description String?  @db.Text
+  imageUrl    String?  @map("image_url") @db.VarChar(500)
+  sortOrder   Int      @default(0) @map("sort_order")
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  members   MemberFocusArea[]
+  exercises ExerciseFocusArea[]
+
+  @@index([status, sortOrder])
+  @@map("focus_areas")
+}
+
+model ExerciseCategory {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  slug        String   @unique @db.VarChar(120)
+  description String?  @db.Text
+  imageUrl    String?  @map("image_url") @db.VarChar(500)
+  sortOrder   Int      @default(0) @map("sort_order")
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  exercises ExerciseCategoryLink[]
+
+  @@index([status, sortOrder])
+  @@map("exercise_categories")
+}
+
+model Muscle {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  slug        String   @unique @db.VarChar(120)
+  muscleGroup String?  @map("muscle_group") @db.VarChar(100)
+  bodyRegion  String?  @map("body_region") @db.VarChar(100)
+  description String?  @db.Text
+  imageUrl    String?  @map("image_url") @db.VarChar(500)
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  exercises ExerciseMuscle[]
+
+  @@map("muscles")
+}
+
+model ExerciseType {
+  id            Int      @id @default(autoincrement())
+  name          String   @db.VarChar(100)
+  slug          String   @unique @db.VarChar(120)
+  description   String?  @db.Text
+  icon          String?  @db.VarChar(100)
+  // Ordered list of logging field keys, e.g. ["sets","reps","weight","rest","rpe","notes"]
+  loggingFields Json     @map("logging_fields")
+  sortOrder     Int      @default(0) @map("sort_order")
+  status        Status   @default(ACTIVE)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  exercises Exercise[]
+
+  @@map("exercise_types")
+}
+
+model EquipmentGroup {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  slug        String   @unique @db.VarChar(120)
+  description String?  @db.Text
+  imageUrl    String?  @map("image_url") @db.VarChar(500)
+  sortOrder   Int      @default(0) @map("sort_order")
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  items EquipmentGroupItem[]
+
+  @@map("equipment_groups")
+}
+
+model Equipment {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  slug        String   @unique @db.VarChar(120)
+  description String?  @db.Text
+  imageUrl    String?  @map("image_url") @db.VarChar(500)
+  sortOrder   Int      @default(0) @map("sort_order")
+  status      Status   @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  groups    EquipmentGroupItem[]
+  members   MemberEquipment[]
+  exercises ExerciseEquipment[]
+  programs  ProgramEquipment[]
+  templates WorkoutTemplateEquipment[]
+
+  @@index([status, sortOrder])
+  @@map("equipment")
+}
+
+model EquipmentGroupItem {
+  groupId     Int @map("group_id")
+  equipmentId Int @map("equipment_id")
+
+  group     EquipmentGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  equipment Equipment      @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, equipmentId])
+  @@map("equipment_group_items")
+}
+
+// ---------------------------------------------------------------------------
+// Exercises
+// ---------------------------------------------------------------------------
+
+model Exercise {
+  id               Int           @id @default(autoincrement())
+  name             String        @db.VarChar(150)
+  slug             String        @unique @db.VarChar(170)
+  shortDescription String?       @map("short_description") @db.VarChar(255)
+  description      String?       @db.Text
+  imageUrl         String?       @map("image_url") @db.VarChar(500)
+  videoUrl         String?       @map("video_url") @db.VarChar(500)
+  exerciseTypeId   Int           @map("exercise_type_id")
+  difficulty       Difficulty    @default(BEGINNER)
+  instructions     Json          // string[] of ordered steps
+  tips             Json?         // string[]
+  commonMistakes   Json?         @map("common_mistakes") // string[]
+  safetyNotes      String?       @map("safety_notes") @db.Text
+  status           ContentStatus @default(DRAFT)
+  viewCount        Int           @default(0) @map("view_count")
+  publishedAt      DateTime?     @map("published_at")
+  createdById      Int?          @map("created_by")
+  updatedById      Int?          @map("updated_by")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  exerciseType      ExerciseType           @relation(fields: [exerciseTypeId], references: [id])
+  createdBy         User?                  @relation("ExerciseCreatedBy", fields: [createdById], references: [id])
+  updatedBy         User?                  @relation("ExerciseUpdatedBy", fields: [updatedById], references: [id])
+  categories        ExerciseCategoryLink[]
+  focusAreas        ExerciseFocusArea[]
+  muscles           ExerciseMuscle[]
+  equipment         ExerciseEquipment[]
+  goals             ExerciseGoal[]
+  alternatives      ExerciseAlternative[]  @relation("ExerciseAlternativeSource")
+  alternativeOf     ExerciseAlternative[]  @relation("ExerciseAlternativeTarget")
+  programExercises  ProgramWorkoutExercise[]
+  templateExercises WorkoutTemplateExercise[]
+  sessionExercises  WorkoutSessionExercise[]
+  saved             SavedExercise[]
+  collectionItems   MemberCollectionExercise[]
+  featuredIn        FeaturedCollectionExercise[]
+  views             ExerciseView[]
+
+  @@index([status, difficulty])
+  @@index([exerciseTypeId])
+  @@index([createdAt])
+  @@index([name])
+  @@map("exercises")
+}
+
+model ExerciseCategoryLink {
+  exerciseId Int @map("exercise_id")
+  categoryId Int @map("category_id")
+
+  exercise Exercise         @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  category ExerciseCategory @relation(fields: [categoryId], references: [id])
+
+  @@id([exerciseId, categoryId])
+  @@index([categoryId])
+  @@map("exercise_category_links")
+}
+
+model ExerciseFocusArea {
+  exerciseId  Int @map("exercise_id")
+  focusAreaId Int @map("focus_area_id")
+
+  exercise  Exercise  @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  focusArea FocusArea @relation(fields: [focusAreaId], references: [id])
+
+  @@id([exerciseId, focusAreaId])
+  @@index([focusAreaId])
+  @@map("exercise_focus_areas")
+}
+
+model ExerciseMuscle {
+  exerciseId Int        @map("exercise_id")
+  muscleId   Int        @map("muscle_id")
+  role       MuscleRole
+
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  muscle   Muscle   @relation(fields: [muscleId], references: [id])
+
+  @@id([exerciseId, muscleId, role])
+  @@index([muscleId, role])
+  @@map("exercise_muscles")
+}
+
+model ExerciseEquipment {
+  exerciseId  Int @map("exercise_id")
+  equipmentId Int @map("equipment_id")
+
+  exercise  Exercise  @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@id([exerciseId, equipmentId])
+  @@index([equipmentId])
+  @@map("exercise_equipment")
+}
+
+model ExerciseGoal {
+  exerciseId Int @map("exercise_id")
+  goalId     Int @map("goal_id")
+
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  goal     Goal     @relation(fields: [goalId], references: [id])
+
+  @@id([exerciseId, goalId])
+  @@index([goalId])
+  @@map("exercise_goals")
+}
+
+model ExerciseAlternative {
+  exerciseId            Int @map("exercise_id")
+  alternativeExerciseId Int @map("alternative_exercise_id")
+  sortOrder             Int @default(0) @map("sort_order")
+
+  exercise    Exercise @relation("ExerciseAlternativeSource", fields: [exerciseId], references: [id], onDelete: Cascade)
+  alternative Exercise @relation("ExerciseAlternativeTarget", fields: [alternativeExerciseId], references: [id], onDelete: Cascade)
+
+  @@id([exerciseId, alternativeExerciseId])
+  @@map("exercise_alternatives")
+}
+
+model ExerciseView {
+  id         Int      @id @default(autoincrement())
+  exerciseId Int      @map("exercise_id")
+  userId     Int?     @map("user_id")
+  viewedAt   DateTime @default(now()) @map("viewed_at")
+
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([exerciseId, viewedAt])
+  @@index([userId, viewedAt])
+  @@map("exercise_views")
+}
+
+// ---------------------------------------------------------------------------
+// Coaches, programs, templates
+// ---------------------------------------------------------------------------
+
+model Coach {
+  id                  Int           @id @default(autoincrement())
+  name                String        @db.VarChar(120)
+  slug                String        @unique @db.VarChar(140)
+  imageUrl            String?       @map("image_url") @db.VarChar(500)
+  headline            String?       @db.VarChar(200)
+  bio                 String?       @db.Text
+  specialities        Json?         // string[]
+  credentials         Json?         // [{ title, issuer, year, verified }]
+  experienceYears     Int?          @map("experience_years")
+  socialLinks         Json?         @map("social_links") // { instagram, website, ... }
+  status              ContentStatus @default(DRAFT)
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  programs Program[]
+
+  @@index([status])
+  @@map("coaches")
+}
+
+model Program {
+  id             Int           @id @default(autoincrement())
+  name           String        @db.VarChar(150)
+  slug           String        @unique @db.VarChar(170)
+  shortDescription String?     @map("short_description") @db.VarChar(255)
+  description    String?       @db.Text
+  imageUrl       String?       @map("image_url") @db.VarChar(500)
+  goalId         Int?          @map("goal_id")
+  coachId        Int?          @map("coach_id")
+  difficulty     Difficulty    @default(BEGINNER)
+  durationWeeks  Int           @default(4) @map("duration_weeks")
+  daysPerWeek    Int           @default(3) @map("days_per_week")
+  targetAudience String?       @map("target_audience") @db.VarChar(255)
+  minExperienceRank Int?       @map("min_experience_rank")
+  maxExperienceRank Int?       @map("max_experience_rank")
+  status         ContentStatus @default(DRAFT)
+  publishedAt    DateTime?     @map("published_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  goal        Goal?               @relation(fields: [goalId], references: [id])
+  coach       Coach?              @relation(fields: [coachId], references: [id])
+  equipment   ProgramEquipment[]
+  weeks       ProgramWeek[]
+  enrollments ProgramEnrollment[]
+  saved       SavedProgram[]
+  collectionItems MemberCollectionProgram[]
+  featuredIn  FeaturedCollectionProgram[]
+  sessions    WorkoutSession[]
+
+  @@index([status, difficulty])
+  @@index([goalId])
+  @@map("programs")
+}
+
+model ProgramEquipment {
+  programId   Int @map("program_id")
+  equipmentId Int @map("equipment_id")
+
+  program   Program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@id([programId, equipmentId])
+  @@map("program_equipment")
+}
+
+model ProgramWeek {
+  id         Int     @id @default(autoincrement())
+  programId  Int     @map("program_id")
+  weekNumber Int     @map("week_number")
+  title      String? @db.VarChar(150)
+  notes      String? @db.Text
+
+  program  Program          @relation(fields: [programId], references: [id], onDelete: Cascade)
+  workouts ProgramWorkout[]
+
+  @@unique([programId, weekNumber])
+  @@map("program_weeks")
+}
+
+model ProgramWorkout {
+  id            Int     @id @default(autoincrement())
+  programWeekId Int     @map("program_week_id")
+  dayNumber     Int     @map("day_number")
+  title         String  @db.VarChar(150)
+  description   String? @db.Text
+  estimatedMinutes Int? @map("estimated_minutes")
+
+  week      ProgramWeek              @relation(fields: [programWeekId], references: [id], onDelete: Cascade)
+  exercises ProgramWorkoutExercise[]
+  sessions  WorkoutSession[]
+
+  @@index([programWeekId, dayNumber])
+  @@map("program_workouts")
+}
+
+model ProgramWorkoutExercise {
+  id              Int     @id @default(autoincrement())
+  workoutId       Int     @map("workout_id")
+  exerciseId      Int     @map("exercise_id")
+  sortOrder       Int     @default(0) @map("sort_order")
+  sets            Int?
+  reps            String? @db.VarChar(20) // "8-12", "AMRAP"
+  durationSeconds Int?    @map("duration_seconds")
+  restSeconds     Int?    @map("rest_seconds")
+  notes           String? @db.VarChar(500)
+
+  workout  ProgramWorkout @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  exercise Exercise       @relation(fields: [exerciseId], references: [id])
+
+  @@index([workoutId, sortOrder])
+  @@index([exerciseId])
+  @@map("program_workout_exercises")
+}
+
+model ProgramEnrollment {
+  id                Int              @id @default(autoincrement())
+  userId            Int              @map("user_id")
+  programId         Int              @map("program_id")
+  status            EnrollmentStatus @default(ACTIVE)
+  currentWeek       Int              @default(1) @map("current_week")
+  currentDay        Int              @default(1) @map("current_day")
+  completedWorkouts Int              @default(0) @map("completed_workouts")
+  startedAt         DateTime         @default(now()) @map("started_at")
+  completedAt       DateTime?        @map("completed_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  program Program @relation(fields: [programId], references: [id])
+
+  @@index([userId, status])
+  @@index([programId, status])
+  @@map("program_enrollments")
+}
+
+model WorkoutTemplate {
+  id               Int           @id @default(autoincrement())
+  name             String        @db.VarChar(150)
+  slug             String        @unique @db.VarChar(170)
+  description      String?       @db.Text
+  imageUrl         String?       @map("image_url") @db.VarChar(500)
+  goalId           Int?          @map("goal_id")
+  difficulty       Difficulty    @default(BEGINNER)
+  daysPerWeek      Int           @default(3) @map("days_per_week")
+  split            String?       @db.VarChar(120)
+  progressionNotes String?       @map("progression_notes") @db.Text
+  status           ContentStatus @default(DRAFT)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  goal      Goal?                      @relation(fields: [goalId], references: [id])
+  exercises WorkoutTemplateExercise[]
+  equipment WorkoutTemplateEquipment[]
+  sessions  WorkoutSession[]
+
+  @@index([status])
+  @@map("workout_templates")
+}
+
+model WorkoutTemplateEquipment {
+  templateId  Int @map("template_id")
+  equipmentId Int @map("equipment_id")
+
+  template  WorkoutTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  equipment Equipment       @relation(fields: [equipmentId], references: [id])
+
+  @@id([templateId, equipmentId])
+  @@map("workout_template_equipment")
+}
+
+model WorkoutTemplateExercise {
+  id          Int     @id @default(autoincrement())
+  templateId  Int     @map("template_id")
+  exerciseId  Int     @map("exercise_id")
+  dayNumber   Int     @default(1) @map("day_number")
+  sortOrder   Int     @default(0) @map("sort_order")
+  sets        Int?
+  reps        String? @db.VarChar(20)
+  durationSeconds Int? @map("duration_seconds")
+  restSeconds Int?    @map("rest_seconds")
+  notes       String? @db.VarChar(500)
+
+  template WorkoutTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  exercise Exercise        @relation(fields: [exerciseId], references: [id])
+
+  @@index([templateId, dayNumber, sortOrder])
+  @@map("workout_template_exercises")
+}
+
+// ---------------------------------------------------------------------------
+// Workout tracking
+// ---------------------------------------------------------------------------
+
+model WorkoutSession {
+  id               Int           @id @default(autoincrement())
+  clientId         String?       @unique @map("client_id") @db.VarChar(64) // idempotency key for offline sync
+  userId           Int           @map("user_id")
+  programId        Int?          @map("program_id")
+  programWorkoutId Int?          @map("program_workout_id")
+  templateId       Int?          @map("template_id")
+  title            String?       @db.VarChar(150)
+  status           SessionStatus @default(ACTIVE)
+  startedAt        DateTime      @default(now()) @map("started_at")
+  pausedAt         DateTime?     @map("paused_at")
+  pausedSeconds    Int           @default(0) @map("paused_seconds")
+  completedAt      DateTime?     @map("completed_at")
+  durationSeconds  Int?          @map("duration_seconds")
+  notes            String?       @db.Text
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  program        Program?                 @relation(fields: [programId], references: [id], onDelete: SetNull)
+  programWorkout ProgramWorkout?          @relation(fields: [programWorkoutId], references: [id], onDelete: SetNull)
+  template       WorkoutTemplate?         @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  exercises      WorkoutSessionExercise[]
+
+  @@index([userId, status])
+  @@index([userId, startedAt])
+  @@index([completedAt])
+  @@map("workout_sessions")
+}
+
+model WorkoutSessionExercise {
+  id         Int     @id @default(autoincrement())
+  sessionId  Int     @map("session_id")
+  exerciseId Int     @map("exercise_id")
+  sortOrder  Int     @default(0) @map("sort_order")
+  notes      String? @db.VarChar(500)
+
+  session  WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exercise Exercise       @relation(fields: [exerciseId], references: [id])
+  sets     WorkoutSet[]
+
+  @@index([sessionId, sortOrder])
+  @@index([exerciseId])
+  @@map("workout_session_exercises")
+}
+
+model WorkoutSet {
+  id                Int           @id @default(autoincrement())
+  clientId          String?       @unique @map("client_id") @db.VarChar(64)
+  sessionExerciseId Int           @map("session_exercise_id")
+  setNumber         Int           @map("set_number")
+  reps              Int?
+  weightValue       Decimal?      @map("weight_value") @db.Decimal(7, 2)
+  weightUnit        WeightUnit?   @map("weight_unit")
+  durationSeconds   Int?          @map("duration_seconds")
+  distanceValue     Decimal?      @map("distance_value") @db.Decimal(8, 3)
+  distanceUnit      DistanceUnit? @map("distance_unit")
+  restSeconds       Int?          @map("rest_seconds")
+  rpe               Decimal?      @db.Decimal(3, 1)
+  calories          Int?
+  caloriesEstimated Boolean       @default(true) @map("calories_estimated")
+  completedAt       DateTime?     @map("completed_at")
+  notes             String?       @db.VarChar(500)
+
+  sessionExercise WorkoutSessionExercise @relation(fields: [sessionExerciseId], references: [id], onDelete: Cascade)
+
+  @@index([sessionExerciseId, setNumber])
+  @@map("workout_sets")
+}
+
+// ---------------------------------------------------------------------------
+// Library
+// ---------------------------------------------------------------------------
+
+model SavedExercise {
+  userId     Int      @map("user_id")
+  exerciseId Int      @map("exercise_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise Exercise @relation(fields: [exerciseId], references: [id])
+
+  @@id([userId, exerciseId])
+  @@index([exerciseId])
+  @@map("saved_exercises")
+}
+
+model SavedProgram {
+  userId    Int      @map("user_id")
+  programId Int      @map("program_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  program Program @relation(fields: [programId], references: [id])
+
+  @@id([userId, programId])
+  @@index([programId])
+  @@map("saved_programs")
+}
+
+model MemberCollection {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  name        String   @db.VarChar(120)
+  description String?  @db.VarChar(500)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user      User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercises MemberCollectionExercise[]
+  programs  MemberCollectionProgram[]
+
+  @@index([userId, sortOrder])
+  @@map("member_collections")
+}
+
+model MemberCollectionExercise {
+  collectionId Int      @map("collection_id")
+  exerciseId   Int      @map("exercise_id")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  collection MemberCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  exercise   Exercise         @relation(fields: [exerciseId], references: [id])
+
+  @@id([collectionId, exerciseId])
+  @@map("member_collection_exercises")
+}
+
+model MemberCollectionProgram {
+  collectionId Int      @map("collection_id")
+  programId    Int      @map("program_id")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  collection MemberCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  program    Program          @relation(fields: [programId], references: [id])
+
+  @@id([collectionId, programId])
+  @@map("member_collection_programs")
+}
+
+// ---------------------------------------------------------------------------
+// Admin-curated featured collections
+// ---------------------------------------------------------------------------
+
+model FeaturedCollection {
+  id          Int           @id @default(autoincrement())
+  name        String        @db.VarChar(150)
+  slug        String        @unique @db.VarChar(170)
+  description String?       @db.Text
+  imageUrl    String?       @map("image_url") @db.VarChar(500)
+  sortOrder   Int           @default(0) @map("sort_order")
+  isFeatured  Boolean       @default(false) @map("is_featured")
+  status      ContentStatus @default(DRAFT)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  exercises FeaturedCollectionExercise[]
+  programs  FeaturedCollectionProgram[]
+
+  @@index([status, isFeatured, sortOrder])
+  @@map("featured_collections")
+}
+
+model FeaturedCollectionExercise {
+  collectionId Int @map("collection_id")
+  exerciseId   Int @map("exercise_id")
+  sortOrder    Int @default(0) @map("sort_order")
+
+  collection FeaturedCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  exercise   Exercise           @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, exerciseId])
+  @@map("featured_collection_exercises")
+}
+
+model FeaturedCollectionProgram {
+  collectionId Int @map("collection_id")
+  programId    Int @map("program_id")
+  sortOrder    Int @default(0) @map("sort_order")
+
+  collection FeaturedCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  program    Program            @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, programId])
+  @@map("featured_collection_programs")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+model NotificationTemplate {
+  id            Int                 @id @default(autoincrement())
+  name          String              @db.VarChar(120)
+  title         String              @db.VarChar(150)
+  body          String              @db.VarChar(500)
+  type          NotificationType    @default(REMINDER)
+  trigger       NotificationTrigger @default(WORKOUT_REMINDER)
+  // e.g. { goalIds: [1], experienceLevelIds: [], onboardingStatus: "COMPLETED" }
+  targetSegment Json?               @map("target_segment")
+  // e.g. { inactiveDays: 3 } or { sendAt: "2026-12-01T09:00:00Z" }
+  schedule      Json?
+  status        Status              @default(ACTIVE)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  jobs NotificationJob[]
+
+  @@map("notification_templates")
+}
+
+model NotificationJob {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  templateId  Int?      @map("template_id")
+  title       String    @db.VarChar(150)
+  body        String    @db.VarChar(500)
+  scheduledAt DateTime  @map("scheduled_at")
+  sentAt      DateTime? @map("sent_at")
+  status      JobStatus @default(PENDING)
+  error       String?   @db.VarChar(500)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template NotificationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([status, scheduledAt])
+  @@index([userId])
+  @@map("notification_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Media and audit
+// ---------------------------------------------------------------------------
+
+model MediaAsset {
+  id           Int       @id @default(autoincrement())
+  storageKey   String    @unique @map("storage_key") @db.VarChar(255)
+  publicUrl    String    @map("public_url") @db.VarChar(500)
+  thumbnailUrl String?   @map("thumbnail_url") @db.VarChar(500)
+  mediaType    MediaType @map("media_type")
+  mimeType     String    @map("mime_type") @db.VarChar(100)
+  sizeBytes    Int       @map("size_bytes")
+  originalName String    @map("original_name") @db.VarChar(255)
+  altText      String?   @map("alt_text") @db.VarChar(255)
+  folder       String?   @db.VarChar(64)
+  metadata     Json?
+  uploadedById Int?      @map("uploaded_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  uploadedBy User? @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([mediaType, createdAt])
+  @@map("media_assets")
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  adminUserId Int?     @map("admin_user_id")
+  action      String   @db.VarChar(64)
+  entityType  String   @map("entity_type") @db.VarChar(64)
+  entityId    String?  @map("entity_id") @db.VarChar(64)
+  summary     String?  @db.VarChar(255)
+  beforeJson  Json?    @map("before_json")
+  afterJson   Json?    @map("after_json")
+  ipAddress   String?  @map("ip_address") @db.VarChar(64)
+  userAgent   String?  @map("user_agent") @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  adminUser User? @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([adminUserId])
+  @@index([createdAt])
+  @@map("admin_audit_logs")
+}
+
+// ============================================================================
+// Friends & in-app notifications
+// ============================================================================
+
+enum FriendRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+model FriendRequest {
+  id          Int                 @id @default(autoincrement())
+  fromUserId  Int                 @map("from_user_id")
+  toUserId    Int                 @map("to_user_id")
+  status      FriendRequestStatus @default(PENDING)
+  createdAt   DateTime            @default(now()) @map("created_at")
+  respondedAt DateTime?           @map("responded_at")
+
+  fromUser User @relation("FriendRequestFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser   User @relation("FriendRequestTo", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  @@index([toUserId, status])
+  @@index([fromUserId, status])
+  @@map("friend_requests")
+}
+
+/// One row per friendship; userAId is always the smaller id.
+model Friendship {
+  userAId   Int      @map("user_a_id")
+  userBId   Int      @map("user_b_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  userA User @relation("FriendshipA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB User @relation("FriendshipB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@id([userAId, userBId])
+  @@index([userBId])
+  @@map("friendships")
+}
+
+model MemberNotification {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  type      String    @db.VarChar(40)
+  title     String    @db.VarChar(150)
+  body      String?   @db.VarChar(500)
+  data      Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@map("member_notifications")
+}
