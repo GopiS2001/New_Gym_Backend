@@ -59,6 +59,9 @@ const base = {
   status: zStatus.default('ACTIVE'),
 };
 
+/** For models without an image_url column: zUrl always emits imageUrl (null), which Prisma rejects. */
+const { imageUrl: _imageUrl, ...baseNoImage } = base;
+
 const sortOrder = { sortOrder: z.coerce.number().int().min(0).max(100000).default(0) };
 
 const count = async (...ps: Promise<number>[]) => (await Promise.all(ps)).reduce((a, b) => a + b, 0);
@@ -141,7 +144,7 @@ export const REFERENCE_CONFIGS: ReferenceConfig[] = [
     hasSortOrder: true,
     sortable: ['name', 'sortOrder', 'createdAt', 'status'],
     schema: z.object({
-      ...base,
+      ...baseNoImage,
       ...sortOrder,
       icon: zOptionalText(100),
       loggingFields: z.array(z.enum(LOGGING_FIELDS)).min(1, 'Select at least one logging field'),
@@ -220,7 +223,7 @@ export const REFERENCE_CONFIGS: ReferenceConfig[] = [
     hasSortOrder: true,
     sortable: ['name', 'sortOrder', 'rank', 'createdAt', 'status'],
     schema: z.object({
-      ...base,
+      ...baseNoImage,
       ...sortOrder,
       rank: z.coerce.number().int().min(0).max(100).default(0),
     }),
