@@ -75,8 +75,27 @@ export class ReferenceService {
     });
   }
 
+  /**
+   * Next display order for a new record: one past the larger of the row count and the highest
+   * existing sortOrder, so it always lands after the last item (3 rows → 4).
+   * Records grouped by `slugScope` (e.g. onboarding options per group) are counted per group.
+   */
+  async nextSortOrder(cfg: ReferenceConfig, input: Record<string, unknown> = {}) {
+    if (!cfg.hasSortOrder) return 0;
+    const scope = cfg.slugScope?.(input) ?? {};
+    const where = Object.fromEntries(Object.entries(scope).filter(([, v]) => v !== undefined && v !== ''));
+    const [count, agg] = await Promise.all([
+      this.delegate(cfg).count({ where }),
+      this.delegate(cfg).aggregate({ where, _max: { sortOrder: true } }),
+    ]);
+    return Math.max(count, agg._max.sortOrder ?? 0) + 1;
+  }
+
   async create(cfg: ReferenceConfig, input: Record<string, unknown>, actor: Actor) {
     const slug = await this.resolveSlug(cfg, input);
+    if (cfg.hasSortOrder && input.sortOrder == null) {
+      input = { ...input, sortOrder: await this.nextSortOrder(cfg, input) };
+    }
     const data = cfg.toData ? cfg.toData({ ...input, slug }, 'create') : { ...input, slug };
     const row = await this.delegate(cfg).create({ data, include: cfg.include });
     const result = this.present(cfg, row);

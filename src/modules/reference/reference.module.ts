@@ -37,6 +37,13 @@ function buildControllers(cfg: ReferenceConfig): Type<unknown>[] {
       return this.service.list(cfg, q);
     }
 
+    /** Suggested display order for a new record (declared before ':id' so it isn't parsed as an id). */
+    @RequirePermissions(PERMISSIONS.CONTENT_VIEW)
+    @Get('next-sort-order')
+    async nextSortOrder(@Query() q: Record<string, string>) {
+      return { sortOrder: await this.service.nextSortOrder(cfg, q) };
+    }
+
     @RequirePermissions(PERMISSIONS.CONTENT_VIEW)
     @Get(':id')
     get(@Param('id', ParseIntPipe) id: number) {

@@ -62,7 +62,8 @@ const base = {
 /** For models without an image_url column: zUrl always emits imageUrl (null), which Prisma rejects. */
 const { imageUrl: _imageUrl, ...baseNoImage } = base;
 
-const sortOrder = { sortOrder: z.coerce.number().int().min(0).max(100000).default(0) };
+/** Optional: when omitted on create, the service assigns the next display order automatically. */
+const sortOrder = { sortOrder: z.coerce.number().int().min(0).max(100000).optional() };
 
 const count = async (...ps: Promise<number>[]) => (await Promise.all(ps)).reduce((a, b) => a + b, 0);
 
