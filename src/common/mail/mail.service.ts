@@ -13,8 +13,10 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
   private readonly transport: Transporter | null;
   private readonly from: string;
+  private readonly brevoKey: string | undefined;
 
   constructor(config: ConfigService) {
+    this.brevoKey = config.get<string>('BREVO_API_KEY') || undefined;
     const host = config.get<string>('SMTP_HOST');
     const user = config.get<string>('SMTP_USER');
     const pass = config.get<string>('SMTP_PASS');
@@ -28,7 +30,41 @@ export class MailService {
   }
 
   get configured() {
-    return !!this.transport;
+    return !!this.transport || !!this.brevoKey;
+  }
+
+  /**
+   * Sends a template saved in Brevo (Transactional → Templates), passing only the
+   * values; the template uses them as {{ params.name }}, {{ params.code }}, …
+   * Needs BREVO_API_KEY and a template id. If either is missing or Brevo refuses,
+   * the fallback email goes out over SMTP instead. Never throws.
+   */
+  async sendTemplate(
+    to: string,
+    templateId: number | undefined,
+    params: Record<string, string | number>,
+    fallback: { subject: string; html: string; text: string },
+  ): Promise<boolean> {
+    if (this.brevoKey && templateId) {
+      try {
+        const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(this.from);
+        const sender = m ? { name: m[1] || 'FitFlow', email: m[2] } : { email: this.from };
+        const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: { 'api-key': this.brevoKey, 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ sender, to: [{ email: to }], templateId, params }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) {
+          this.logger.log(`Email sent to ${to} with Brevo template #${templateId}`);
+          return true;
+        }
+        this.logger.error(`Brevo template #${templateId} to ${to} failed (${res.status}): ${await res.text()} — using SMTP instead`);
+      } catch (e) {
+        this.logger.error(`Brevo template #${templateId} to ${to} failed: ${(e as Error).message} — using SMTP instead`);
+      }
+    }
+    return this.send(to, fallback.subject, fallback.html, fallback.text);
   }
 
   /** Never throws: a mail failure must not break sign-up or password reset. */

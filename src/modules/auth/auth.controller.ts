@@ -39,6 +39,7 @@ const TokenSchema = z.object({ token: z.string().min(10) });
 const ForgotSchema = z.object({ email: z.string().trim().email() });
 const zCode = z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code');
 const VerifyCodeSchema = z.object({ code: zCode });
+const CheckResetCodeSchema = z.object({ email: z.string().trim().email(), code: zCode });
 const ResetSchema = z
   .object({
     token: z.string().min(10).optional(),
@@ -50,7 +51,7 @@ const ResetSchema = z
   .refine((d) => d.token || (d.email && d.code), { path: ['code'], message: 'Enter the 6-digit code from your email' })
   .refine((d) => d.password === d.confirmPassword, { path: ['confirmPassword'], message: 'Passwords do not match' });
 const ChangePasswordSchema = z
-  .object({ currentPassword: z.string().min(1), newPassword: zPassword, confirmPassword: z.string() })
+  .object({ newPassword: zPassword, confirmPassword: z.string() })
   .refine((d) => d.newPassword === d.confirmPassword, { path: ['confirmPassword'], message: 'Passwords do not match' });
 
 const meta = (req: Request): ClientMeta => ({ ip: req.ip, userAgent: req.headers['user-agent'] });
@@ -123,6 +124,15 @@ export class AuthController {
     return this.auth.forgotPassword(body.email);
   }
 
+  /** Checks a reset code before the new-password step (the code stays valid for reset-password). */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(200)
+  @Post('check-reset-code')
+  checkResetCode(@Body(new ZodPipe(CheckResetCodeSchema)) body: z.infer<typeof CheckResetCodeSchema>) {
+    return this.auth.checkResetCode(body.email, body.code);
+  }
+
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(200)
@@ -138,7 +148,7 @@ export class AuthController {
     @CurrentUser() user: AuthUser,
     @Body(new ZodPipe(ChangePasswordSchema)) body: z.infer<typeof ChangePasswordSchema>,
   ) {
-    return this.auth.changePassword(user.id, body.currentPassword, body.newPassword);
+    return this.auth.changePassword(user.id, body.newPassword);
   }
 
   @ApiBearerAuth()

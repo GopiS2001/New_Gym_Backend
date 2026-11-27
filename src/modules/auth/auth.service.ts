@@ -246,7 +246,7 @@ export class AuthService {
   }
 
   /** Checks a code; wrong entries count toward a lockout of the current code. */
-  private async consumeCode(userId: number, purpose: TokenPurpose, code: string) {
+  private async consumeCode(userId: number, purpose: TokenPurpose, code: string, markUsed = true) {
     const record = await this.prisma.oneTimeToken.findFirst({
       where: { userId, purpose, usedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: 'desc' },
@@ -260,7 +260,7 @@ export class AuthService {
       await this.prisma.oneTimeToken.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
       throw new BadRequestException(left > 0 ? `That code isn't right. ${left} attempt${left === 1 ? '' : 's'} left.` : 'Too many wrong attempts. Request a new code.');
     }
-    await this.prisma.oneTimeToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
+    if (markUsed) await this.prisma.oneTimeToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
     return record;
   }
 
@@ -315,13 +315,27 @@ export class AuthService {
         minutes: CODE_MINUTES.PASSWORD_RESET,
         footer: "If you didn't ask to reset your password, you can ignore this email — your password won't change.",
       });
-      void this.mail.send(user.email, `${code} is your FitFlow password reset code`, mail.html, mail.text);
+      const firstName = user.name.split(' ')[0] || user.name;
+      void this.mail.sendTemplate(
+        user.email,
+        Number(this.config.get('BREVO_TEMPLATE_PASSWORD_RESET')) || undefined,
+        { name: firstName, code, minutes: CODE_MINUTES.PASSWORD_RESET },
+        { subject: `${code} is your FitFlow password reset code`, html: mail.html, text: mail.text },
+      );
     }
     return {
       success: true,
       message: 'If an account exists for that email, we sent a 6-digit reset code.',
       ...this.devOnly({ resetCode: code }),
     };
+  }
+
+  /** Step 2 of forgot password: is this code right? Wrong tries still count toward the lockout. */
+  async checkResetCode(emailInput: string, code: string) {
+    const user = await this.prisma.user.findUnique({ where: { email: AuthService.normaliseEmail(emailInput) } });
+    if (!user) throw new BadRequestException('This code has expired. Request a new one.');
+    await this.consumeCode(user.id, 'PASSWORD_RESET', code, false);
+    return { success: true };
   }
 
   /** Reset with { email, code } (app) or a legacy link token. */
@@ -344,11 +358,8 @@ export class AuthService {
     return { success: true };
   }
 
-  async changePassword(userId: number, currentPassword: string, newPassword: string) {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
-      throw new BadRequestException('Current password is incorrect');
-    }
+  /** Signed-in user sets a new password (no current password needed). */
+  async changePassword(userId: number, newPassword: string) {
     await this.prisma.user.update({ where: { id: userId }, data: { passwordHash: await this.hashPassword(newPassword) } });
     return { success: true };
   }
